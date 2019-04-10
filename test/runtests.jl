@@ -2,6 +2,8 @@ import ImageMagick # not good ...
 using MRIReco
 using Test
 using LinearAlgebra
+using HTTP
+
 
 include("testTrajectories.jl")
 include("testIO.jl")
@@ -13,4 +15,5 @@ testSimulation()
 testOperators()
 testReco()
 
+include("testBrukerFile.jl")
 include("testISMRMRD.jl")
