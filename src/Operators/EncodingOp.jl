@@ -9,7 +9,7 @@ function EncodingOp2d(acqData::AcquisitionData, params::Dict; slice=1,
   ft = Array{AbstractLinearOperator,1}(undef,acqData.numEchoes)
 
   for i = 1:acqData.numEchoes
-    tr = trajectory(acqData.seq,i)
+    tr = trajectory(acqData,i)
     ft[i] = fourierEncodingOp2d(tr, params, slice=slice)
   end
 
@@ -47,7 +47,7 @@ function EncodingOp3d(acqData::AcquisitionData, params::Dict;
   ft = Array{AbstractLinearOperator,1}(undef,acqData.numEchoes)
 
   for i = 1:acqData.numEchoes
-    tr = trajectory(acqData.seq,i)
+    tr = trajectory(acqData,i)
     ft[i] = fourierEncodingOp3d(tr, params)
   end
 
@@ -88,7 +88,7 @@ function lrEncodingOp(acqData::AcquisitionData,params::Dict; numEchoes::Int64=1,
   Φ = MapSliceOp(subspace[:,:,1],2,(N, K, acqData.numCoils), (N, numEchoes, acqData.numCoils))
 
   # Fourier Operator
-  tr = trajectory(acqData.seq,1)
+  tr = trajectory(acqData,1)
   params[:fft] = true
   ft = fourierEncodingOp2d(tr, params)
 
@@ -154,7 +154,7 @@ return 2d Fourier encoding operator (either Explicit, FFT or NFFT)
   symmetrize : symmetrizes the operator
   echoImage : calculate signal evolution relative to the echo time
 """
-function fourierEncodingOp2d(shape::NTuple{2,Int64}, tr::AbstractTrajectory, opName::String;
+function fourierEncodingOp2d(shape::NTuple{2,Int64}, tr::Trajectory, opName::String;
           slice::Int64=1, correctionMap=[], symmetrize::Bool=true, echoImage::Bool=true,
           method::String="nfft", alpha::Float64=1.75, m::Float64=4.0, K::Int64=20, kargs...)
 
@@ -198,7 +198,7 @@ return 3d Fourier encoding operator (either Explicit, FFT or NFFT)
   symmetrize : symmetrizes the operator
   echoImage : calculate signal evolution relative to the echo time
 """
-function fourierEncodingOp3d(shape::NTuple{3,Int64}, tr::AbstractTrajectory, opName::String;
+function fourierEncodingOp3d(shape::NTuple{3,Int64}, tr::Trajectory, opName::String;
           correctionMap=[], symmetrize::Bool=true, echoImage::Bool=true,
           method::String="nfft", alpha::Float64=1.75, m::Float64=4.0, K::Int64=20, kargs...)
 
