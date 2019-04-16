@@ -6,15 +6,17 @@ function reconstruction_direct_2d(acqData::AcquisitionData, recoParams::Dict)
   numSlices = acqData.numSlices
   Ireco = zeros(ComplexF64, prod(recoParams[:shape]), numSlices, numEchoes, numCoils)
 
-  acqDataWeighted = weightedData(acqData, recoParams[:shape])
+  # acqDataWeighted = weightedData(acqData, recoParams[:shape])
+  weights = samplingDensity(acqData,recoParams[:shape])
 
   p = Progress(numSlices*numCoils*numEchoes, 1, "Direct Reconstruction...")
 
   for i = 1:numSlices
-    F = EncodingOp2d(acqData, recoParams, slice=i)
+    F = encodingOps2d_simple(acqData, recoParams, slice=i)
     for k = 1:numEchoes
       for j = 1:numCoils
-        Ireco[:,i,k,j] = adjoint(F[k]) * kData(acqDataWeighted,k,j,i)
+        kdata = kData(acqData,k,j,i) .* (weights[k].^2)
+        Ireco[:,i,k,j] = adjoint(F[k]) * kdata
         next!(p)
       end
     end
@@ -30,14 +32,16 @@ function reconstruction_direct_3d(acqData::AcquisitionData, recoParams::Dict)
   numCoils = acqData.numCoils
   Ireco = zeros(ComplexF64, prod(recoParams[:shape]), numEchoes, numCoils)
 
-  acqDataWeighted = weightedData(acqData, recoParams[:shape])
+  # acqDataWeighted = weightedData(acqData, recoParams[:shape])
+  weights = samplingDensity(acqData,recoParams[:shape])
 
   p = Progress(numCoils*numEchoes, 1, "Direct Reconstruction...")
 
-  F = EncodingOp3d(acqData, recoParams)
+  F = encodingOps3d_simple(acqData, recoParams)
   for j = 1:numEchoes
     for i = 1:numCoils
-      Ireco[:,j,i] = adjoint(F[j]) * kData(acqDataWeighted,j,i,1)
+      kdata = kData(acqData,j,i,1) .* (weights[j].^2)
+      Ireco[:,j,i] = adjoint(F[j]) * kdata
       next!(p)
     end
   end
