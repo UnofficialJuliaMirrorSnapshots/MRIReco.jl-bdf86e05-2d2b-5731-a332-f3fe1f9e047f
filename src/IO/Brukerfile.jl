@@ -40,7 +40,7 @@ end
 
 function getindex(b::BrukerFile, parameter)#::String
   if !b.acqpRead && ( parameter=="NA" || parameter=="NR" || parameter=="NI" ||
-                      parameter[1:2] == "GO" || parameter[1:3] == "ACQ" )
+                      parameter=="SW" || parameter[1:2] == "GO" || parameter[1:3] == "ACQ" )
     acqppath = joinpath(b.path, "acqp")
     read(b.params, acqppath, maxEntries=b.maxEntriesAcqp)
     b.acqpRead = true
@@ -99,19 +99,6 @@ function Base.show(io::IO, b::BrukerFile)
   print(io, "BrukerFile: ", b.path)
 end
 
-# study parameters
-studyName(b::BrukerFile) = string(experimentSubject(b),"_",
-                                  latin1toutf8(b["VisuStudyId"]),"_",
-                                  b["VisuStudyNumber"])
-studyNumber(b::BrukerFile) = parse(Int64,b["VisuStudyNumber"])
-experimentName(b::BrukerFile) = latin1toutf8(b["ACQ_scan_name"])
-experimentNumber(b::BrukerFile) = parse(Int64,b["VisuExperimentNumber"])
-
-# scanner parameters
-scannerFacility(b::BrukerFile) = latin1toutf8(b["ACQ_institution"])
-scannerOperator(b::BrukerFile) = latin1toutf8(b["ACQ_operator"])
-scannerName(b::BrukerFile) = b["ACQ_station"]
-
 # acquisition parameters
 function acqStartTime(b::BrukerFile)
   m = match(r"<(.+)\+",b["ACQ_time"])
@@ -126,10 +113,19 @@ end
 acqNumAverages(b::BrukerFile) = parse(Int,b["NA"])
 acqNumSlices(b::BrukerFile) = parse(Int,b["NSLICES"])
 acqNumInterleaves(b::BrukerFile) = parse(Int,b["NI"])
+
 function acqSize(b::BrukerFile)
   N = parse.(Int,b["ACQ_size"])
   N[1] = div(N[1],2)
   return N
+end
+function acqFov(b::BrukerFile)
+  N = parse.(Float64,b["ACQ_fov"])./100
+  if length(N) == 3
+    return N
+  else
+    return push!(N, parse(Float64,b["ACQ_slice_sepn"][1])./100)
+  end
 end
 ##$PVM_EncAvailReceivers=1
 
@@ -230,8 +226,30 @@ function RawAcquisitionData(b::BrukerFile)
 
     params = Dict{String,Any}()
     params["trajectory"] = "cartesian"
-    params["encodedSize"] = acqSize(b)
+    N = acqSize(b)
+    if length(N) < 3
+      N_ = ones(Int,3)
+      N_[1:length(N)] .= N
+      N = N_
+    end
+    params["encodedSize"] = N
+    F = acqFov(b)
+    params["encodedFOV"] = F
     params["receiverChannels"] = 1
+    params["H1resonanceFrequency_Hz"] = parse(Float64,b["SW"])*1000000
+    params["studyID"] = b["VisuStudyId"]
+    #params["studyDescription"] = b["ACQ_scan_name"]
+    #params["studyInstanceUID"] =
+    params["referringPhysicianName"] = latin1toutf8(b["ACQ_operator"])
+
+    params["patientName"] = b["VisuSubjectName"]
+
+    params["measurementID"] = parse(Int64,b["VisuExperimentNumber"])
+    params["seriesDescription"] = b["ACQ_scan_name"]
+
+    params["institutionName"] = latin1toutf8(b["ACQ_institution"])
+    params["stationName"] = b["ACQ_station"]
+    params["systemVendor"] = "Bruker"
 
     return RawAcquisitionData(params, profiles)
 end
@@ -252,8 +270,8 @@ function recoData(f::BrukerFile)
   return map(Float32,I)
 end
 
-recoFov(f::BrukerFile) = push!(parse.(Float64,f["RECO_fov",1])./1000,
-                                parse(Float64,f["ACQ_slice_sepn"][1])./1000)
+recoFov(f::BrukerFile) = push!(parse.(Float64,f["RECO_fov",1])./100,
+                                parse(Float64,f["ACQ_slice_sepn"][1])./100)
 recoFovCenter(f::BrukerFile) = zeros(3)
 recoSize(f::BrukerFile) = push!(parse.(Int,f["RECO_size",1]),
                                 parse(Int,f["RecoObjectsPerRepetition",1]))
