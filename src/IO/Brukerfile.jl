@@ -1,7 +1,6 @@
 include("Jcampdx.jl")
 
-export BrukerFile, studyName, studyNumber, experimentName, experimentNumber,
-       scannerFacility, scannerOperator, scannerName, acqStartTime, acqNumFrames, acqNumAverages
+export BrukerFile, recoData
 
 
 function latin1toutf8(str::AbstractString)
@@ -136,12 +135,25 @@ acqRareFactor(b::BrukerFile) = parse(Int,b["ACQ_phase_factor"])
 acqSpatialSize1(b::BrukerFile) = parse(Int,b["ACQ_spatial_size_1"])
 acqNumRepetitions(b::BrukerFile) = parse(Int,b["NR"])
 acqObjOrder(b::BrukerFile) = parse.(Int,b["ACQ_obj_order"])
+acqReadOffset(b::BrukerFile) = parse.(Float64,b["ACQ_read_offset"])
+acqPhase1Offset(b::BrukerFile) = parse.(Float64,b["ACQ_phase1_offset"])
+acqPhase2Offset(b::BrukerFile) = parse.(Float64,b["ACQ_phase2_offset"])
+acqGradMatrix(b::BrukerFile) = parse.(Float64,b["ACQ_grad_matrix"])
+acqSliceOffset(b::BrukerFile) = parse.(Float64,b["ACQ_slice_offset"])
+acqFlipAngle(b::BrukerFile) = parse(Float64,b["ACQ_flip_angle"])
+acqProtocolName(b::BrukerFile) = b["ACQ_protocol_name"]
+acqInterEchoTime(b::BrukerFile) = parse(Float64,b["ACQ_inter_echo_time"][1])
+acqEchoTime(b::BrukerFile) = parse(Float64,b["ACQ_echo_time"][1])
+acqRepetitionTime(b::BrukerFile) = parse(Float64,b["ACQ_repetition_time"][1])
+
+Base.ndims(b::BrukerFile) = parse(Int, b["ACQ_dim"])
 
 pvmEncSteps1(b::BrukerFile) = parse.(Int,b["PVM_EncSteps1"])
 pvmEncSteps2(b::BrukerFile) = parse.(Int,b["PVM_EncSteps2"])
 pvmEncValues1(b::BrukerFile) = parse.(Float32,b["PVM_EncSteps1"])
 pvmEncValues2(b::BrukerFile) = parse.(Float32,b["PVM_EncSteps2"])
 pvmMatrix(b::BrukerFile) = parse.(Int,b["PVM_Matrix"])
+
 
 function acqDataType(b::BrukerFile)
   format = b["GO_raw_data_format"]
@@ -189,6 +201,12 @@ function RawAcquisitionData(b::BrukerFile)
     objOrd = acqObjOrder(b)
     objOrd = objOrd.-minimum(objOrd)
 
+    gradMatrix = acqGradMatrix(b)
+
+    offset1 = acqReadOffset(b)
+    offset2 = acqPhase1Offset(b)
+    offset3 = ndims(b) == 2 ? acqSliceOffset(b) : acqPhase2Offset(b)
+
     profiles = Profile[]
     for nR = 1:numRep
       for nEnc2 = 1:numEncSteps2
@@ -199,21 +217,29 @@ function RawAcquisitionData(b::BrukerFile)
                   counter = EncodingCounters(kspace_encode_step_1=encSteps1[nPhase1+phaseFactor*(nPhase2-1)],
                                              kspace_encode_step_2=encSteps2[nEnc2],
                                              average=0,
-                                             slice=objOrd[nSl], # I am not sure...
-                                             contrast=0,
+                                             slice=objOrd[nSl],
+                                             contrast=nEcho-1,
                                              phase=0,
-                                             repetition=0,
+                                             repetition=nR-1,
                                              set=0,
                                              segment=0 )
 
-                  head = AcquisitionHeader(version=0, flags=0, measurement_uid=0, scan_counter=0,
-                     acquisition_time_stamp=0, physiology_time_stamp = ntuple(i->Int32(0),3),
-                     number_of_samples=N[1], available_channels=0, active_channels=0, channel_mask=ntuple(i->Int64(0),16),
-                     discard_pre=0, discard_post=0, center_sample=0, encoding_space_ref=0, trajectory_dimensions=0,
-                     sample_time_us=0.0, position=ntuple(i->Float32(0),3), read_dir=ntuple(i->Float32(0),3),
-                     phase_dir=ntuple(i->Float32(0),3), slice_dir=ntuple(i->Float32(0),3),
-                     patient_table_position=ntuple(i->Float32(0),3), idx=counter,
-                     user_int=ntuple(i->Int32(0),8), user_float=ntuple(i->Float32(0),8))
+                  G = gradMatrix[:,:,nSl]
+                  read_dir = (G[1,1],G[2,1],G[3,1])
+                  phase_dir = (G[1,2],G[2,2],G[3,2])
+                  slice_dir = (G[1,3],G[2,3],G[3,3])
+
+                  # Not sure if the following is correct...
+                  pos = offset1[nSl]*G[:,1] +
+                        offset2[nSl]*G[:,2] +
+                        offset3[nSl]*G[:,3]
+
+                  position = (pos[1], pos[2], pos[3])
+
+                  head = AcquisitionHeader(number_of_samples=N[1], idx=counter,
+                                           read_dir=read_dir, phase_dir=phase_dir,
+                                           slice_dir=slice_dir, position=position,
+                                           center_sample=div(N[1],2))
                   traj = Matrix{Float32}(undef,0,0)
                   dat = map(ComplexF64, reshape(I[:,nEcho,nPhase1,nSl,nPhase2,nEnc2,nR],:,1))
                   push!(profiles, Profile(head,traj,dat) )
@@ -236,7 +262,7 @@ function RawAcquisitionData(b::BrukerFile)
     F = acqFov(b)
     params["encodedFOV"] = F
     params["receiverChannels"] = 1
-    params["H1resonanceFrequency_Hz"] = parse(Float64,b["SW"])*1000000
+    params["H1resonanceFrequency_Hz"] = round(Int, parse(Float64,b["SW"])*1000000)
     params["studyID"] = b["VisuStudyId"]
     #params["studyDescription"] = b["ACQ_scan_name"]
     #params["studyInstanceUID"] =
@@ -250,6 +276,13 @@ function RawAcquisitionData(b::BrukerFile)
     params["institutionName"] = latin1toutf8(b["ACQ_institution"])
     params["stationName"] = b["ACQ_station"]
     params["systemVendor"] = "Bruker"
+
+    params["TR"] = acqRepetitionTime(b)
+    params["TE"] = acqEchoTime(b)
+    #params["TI"] = ???
+    params["flipAngle_deg"] = acqFlipAngle(b)
+    params["sequence_type"] = acqProtocolName(b)
+    params["echo_spacing"] = acqInterEchoTime(b)
 
     return RawAcquisitionData(params, profiles)
 end
@@ -265,7 +298,7 @@ function recoData(f::BrukerFile)
   #end
 
   I = open(recoFilename,"r") do fd
-    read!(fd,Array{Int16,3}(undef,1,prod(N),1))
+    read!(fd,Array{Int16,3}(undef,N...))
   end
   return map(Float32,I)
 end

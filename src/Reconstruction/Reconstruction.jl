@@ -27,30 +27,53 @@ end
 
 function reconstruction_2d(acqData::AcquisitionData, recoParams::Dict)
   recoParams = merge(defaultRecoParams(), recoParams)
+
+  # direct reco
   if recoParams[:reco] == "direct"
-    return reconstruction_direct_2d(acqData, recoParams)
-  elseif recoParams[:reco] == "standard"
-    return reconstruction_simple(acqData, recoParams)
-  elseif recoParams[:reco] == "multiEcho"
-    return reconstruction_multiEcho(acqData, recoParams)
-  elseif recoParams[:reco] == "multiCoil"
-    return reconstruction_multiCoil(acqData, recoParams)
-  elseif recoParams[:reco] == "multiCoilMultiEcho"
-    return reconstruction_multiCoilMultiEcho(acqData, recoParams)
-  else
-    error("RecoModel $(recoParams[:reco]) not found.")
+    shape, weights, cmap = setupDirectReco(acqData, recoParams)
+    return reconstruction_direct_2d(acqData, shape, weights, cmap)
   end
+
+  # iterative reco
+  par = setupIterativeReco(acqData, recoParams)
+  if recoParams[:reco] == "standard"
+    return reconstruction_simple(acqData, par.shape, par.reg, par.sparseTrafo, par.weights, par.solvername, par.correctionMap, par.method, par.normalize, recoParams)
+  elseif recoParams[:reco] == "multiEcho"
+    return reconstruction_multiEcho(acqData, par.shape, par.reg, par.sparseTrafo, par.weights, par.solvername, par.correctionMap, par.method, par.normalize, recoParams)
+  elseif recoParams[:reco] == "multiCoil"
+    return reconstruction_multiCoil(acqData, par.shape, par.reg, par.sparseTrafo, par.weights, par.solvername, par.senseMaps, par.correctionMap, par.method, par.normalize, recoParams)
+  elseif recoParams[:reco] == "multiCoilMultiEcho"
+    return reconstruction_multiCoilMultiEcho(acqData, par.shape, par.reg, par.sparseTrafo, par.weights, par.solvername, par.senseMaps, par.correctionMap, par.method, par.normalize, recoParams)
+  else
+    @error "RecoModel $(recoParams[:reco]) not found."
+  end
+
   return reconstruction_direct_2d(acqData, recoParams)
 end
 
 function reconstruction_3d(acqData::AcquisitionData, recoParams::Dict)
   recoParams = merge(defaultRecoParams(), recoParams)
   if recoParams[:reco] == "direct"
-    return reconstruction_direct_3d(acqData, recoParams)
-  else
-    error("3D reconstruction is not yet implimented")
+    shape, weights, cmap = setupDirectReco(acqData, recoParams)
+    return reconstruction_direct_3d(acqData, shape, weights, cmap)
   end
-  return reconstruction_direct_3d(acqData, recoParams)
+
+  acqData2d = convert3dTo2d(acqData)
+  par = setupIterativeReco(acqData2d, recoParams)
+  if recoParams[:reco] == "standard"
+    Ireco = reconstruction_simple(acqData2d, par.shape, par.reg, par.sparseTrafo, par.weights, par.solvername, par.correctionMap, par.method, par.normalize, recoParams)
+  elseif recoParams[:reco] == "multiEcho"
+    Ireco = reconstruction_multiEcho(acqData2d, par.shape, par.reg, par.sparseTrafo, par.weights, par.solvername, par.correctionMap, par.method, par.normalize, recoParams)
+  elseif recoParams[:reco] == "multiCoil"
+    Ireco = reconstruction_multiCoil(acqData2d, par.shape, par.reg, par.sparseTrafo, par.weights, par.solvername, par.senseMaps, par.correctionMap, par.method, par.normalize, recoParams)
+  elseif recoParams[:reco] == "multiCoilMultiEcho"
+    Ireco = reconstruction_multiCoilMultiEcho(acqData2d, par.shape, par.reg, par.sparseTrafo, par.weights, par.solvername, par.senseMaps, par.correctionMap, par.method, par.normalize, recoParams)
+  else
+    @error "RecoModel $(recoParams[:reco]) not found."
+  end
+  Ireco = permutedims(Ireco,[3,1,2,4,5])
+
+  return Ireco
 end
 
 # This version stores the reconstructed data into a file

@@ -10,20 +10,25 @@ if !isdir("brukerfileCart")
 end
 
 b = BrukerFile("brukerfileCart")
-#N = MRIReco.pvmMatrix(b)
 
 acq = RawAcquisitionData(b)
-acqData = acquisitionData(acq)
+acqData = AcquisitionData(acq)
 N = acqData.encodingSize
 
 params = Dict{Symbol, Any}()
 params[:reco] = "direct"
 params[:shape] = (N[1],N[2]) #this should be clear from context
 
-Ireco = abs.(vec(reconstruction(acqData, params)))
-Icolored = colorview(Gray, Ireco./maximum(Ireco))
-save("brukerCart.png", reshape(Icolored,N[1],N[2],:)[:,:,13] )
+Ireco = reconstruction(acqData, params)
+exportImage("brukerCart.png", Ireco[:,:,1,1,1])
 
+# Convert to ISMRMRD file
+fout = ISMRMRDFile("brukerfileCart.h5")
+save(fout, acq)
+
+# Reco data stored in BrukerFile
+Iloaded = recoData(b)
+@test size(Iloaded) == (128, 128, 15)
 
 
 

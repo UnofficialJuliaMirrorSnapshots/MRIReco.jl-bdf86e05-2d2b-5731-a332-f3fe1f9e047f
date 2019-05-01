@@ -2,7 +2,9 @@ module MRIReco
 
 #using Compat
 using ImageMagick
-using QuartzImageIO
+if Sys.isapple()
+  using QuartzImageIO
+end
 using FileIO
 using ProgressMeter
 using Reexport
@@ -20,6 +22,7 @@ using Graphics: @mustimplement
 using ColorTypes
 using ColorVectorSpace
 using Wavelets
+using HDF5
 using LightXML
 using NIfTI
 @reexport using Unitful
