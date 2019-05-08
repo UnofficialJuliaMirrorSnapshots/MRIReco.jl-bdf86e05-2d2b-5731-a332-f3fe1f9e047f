@@ -54,7 +54,8 @@ end
 function trajectory(f::RawAcquisitionData; slice::Int=1, contrast::Int=1)
   name = get(f.params, "trajectory","cartesian")
   if lowercase(name) == "cartesian"
-    if f.params["encodedSize"][3]>1
+    dim = ( maximum(encSteps2(f))==1 ? 2 : 3)
+    if dim==3
       tr = trajectory("Cartesian3D", f.params["encodedSize"][2],
                                      f.params["encodedSize"][1],
                                      numSlices=f.params["encodedSize"][3])
@@ -105,7 +106,7 @@ end
 
 
 function numChannels(f::RawAcquisitionData)
-  return f.params["receiverChannels"]
+  return f.profiles[1].head.active_channels
 end
 
 encSteps1(f::RawAcquisitionData) =

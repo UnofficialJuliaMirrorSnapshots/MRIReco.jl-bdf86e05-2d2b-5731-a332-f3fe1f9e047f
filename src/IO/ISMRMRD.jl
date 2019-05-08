@@ -18,11 +18,11 @@ function RawAcquisitionData(f::ISMRMRDFile, dataset="dataset")
     M = length(d)
 
     profiles = Profile[]
-    chan = params["receiverChannels"]
 
     for m=1:M
       head = read_header(d[m].data[1], dtypehead)
       D = Int(head.trajectory_dimensions)
+      chan = Int(head.active_channels)
 
       N = reinterpret(Int64, d[m].data[2][1:8])[1]
       if N > 0
@@ -47,6 +47,9 @@ function RawAcquisitionData(f::ISMRMRDFile, dataset="dataset")
   end
 end
 
+function AcquisitionData(f::ISMRMRDFile, dataset="dataset")
+  return AcquisitionData(RawAcquisitionData(f,dataset))
+end
 
 function read_header(header, dtypehead)
   # very important to use the offset here, since the offset varies from
