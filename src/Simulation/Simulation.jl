@@ -6,7 +6,7 @@ include("CoilSensitivity.jl")
 include("ExpApproximation.jl")
 
 """
-  simulation(image::Array{Float64}, simParams::Dict)
+    simulation(image::Array{T,3}, simParams::Dict) where T<:Union{ComplexF64,Float64}
 
 Simulate MRI raw data from given `image` data. All simulation parameters
 are passed to the function in the form of a dictionary.
@@ -18,7 +18,7 @@ function simulation(image::Array{T,3}, simParams::Dict) where T<:Union{ComplexF6
   trajName = get(simParams,:trajName,"Cartesian")
   seq = sequence(seqName, simParams[:numProfiles], simParams[:numSamplingPerProfile]; simParams...)
   numSamp, numProf = get(simParams, :numSamplingPerProfile,1), get(simParams, :numProfiles,1)
-  tr = [trajectory(trajName, numProf,numSamp; simParams...) for i=1:numEchoes(seq)]
+  tr = [trajectory(trajName, numProf,numSamp; simParams...) for i=1:numContrasts(seq)]
 
   opName = get(simParams,:simulation,"fast")
   if opName!="fast" && opName!="explicit"
@@ -28,7 +28,12 @@ function simulation(image::Array{T,3}, simParams::Dict) where T<:Union{ComplexF6
   return simulation(seq, tr, ComplexF64.(image); opName=opName, r2map=real.(cmap), fmap=imag.(cmap), simParams...)
 end
 
-# This version stores the simulation data into a file
+"""
+    simulation(image::Array{T,3}, simParams::Dict, filename::String) where T<:Union{ComplexF64,Float64}
+
+Performs the same simulation as `simulation(image, simParams)` and saves the result in
+a file with name `filename`
+"""
 function simulation(image::Array{T,3}, simParams::Dict, filename::String;
                         force=false) where T<:Union{ComplexF64,Float64}
   if !force && isfile(filename)
@@ -40,6 +45,12 @@ function simulation(image::Array{T,3}, simParams::Dict, filename::String;
   end
 end
 
+"""
+    simulation(image::Array{T,2}, simParams::Dict) where T<:Union{ComplexF64,Float64}
+
+Simulate MRI raw data from given `image` data. All simulation parameters
+are passed to the function in the form of a dictionary.
+"""
 function simulation(image::Array{T,2}, simParams::Dict) where T<:Union{ComplexF64,Float64}
   nx,ny = size(image)
   return simulation(reshape(image,nx,ny,1),simParams)
@@ -50,23 +61,23 @@ end
 #####################################################################
 
 """
-    Transforms a given image to k-space Domain using an exact
-    evaluation of the discrete integral.
-    Returns the demodulated signal.
+simulation2d(tr::Trajectory, image::Array{ComplexF64,3}, correctionMap=[]
+              ; opName="fast", senseMaps=[], verbose=true, kargs...)
+
+Transforms a given image to k-space Domain for a 2d Acquisition.
+The Fourier integrals can be evaluated exactly or using NFFT
+Returns the demodulated signal.
 
 ...
 # Arguments
-* `tr::Abstract2DTrajectory` : Two-dimensional Trajectory
-* `image::Matrix` : Image to be transformed
-* `correctionMap=[]` : Correctionmap is summed up of the field offresonance and relaxation
-* `verbose=true` : Prints the progress if true
+* `tr::Trajectory`             - two-dimensional Trajectory
+* `image::Array{ComplexF64,3}` - image to be transformed
+* (`correctionMap=[]`)         - sum of the field offresonance (imaginary) map and relaxation map (real)
+* (`opName="fast")             - name of operator to use ("explicit" or "fast")
+* (`sensmaps=[]`)              - array of coil sensitivities
+* (`verbose=true`)             - prints the progress if true
+* `kargs...`                   - addional keyword arguments
 ...
-# Examples
-```jldoctest
-julia> N=64; I = shepp_logan(N); tr = CartesianTrajectory(N,N);
-julia> kdata = simulation(tr,I);
-
-```
 
 """
 function simulation2d(tr::Trajectory, image::Array{ComplexF64,3}, correctionMap=[]
@@ -109,20 +120,26 @@ function simulation2d(tr::Trajectory, image::Array{ComplexF64,3}, correctionMap=
     end
   end
 
-  return AcquisitionData(tr, kdata,numCoils=nc,numSlices=nz,encodingSize=[nx,ny,nz])
+  return AcquisitionData(tr, kdata,encodingSize=[nx,ny,nz])
 end
 
 """
-    Transforms a given image to k-space Domain using an exact
-    evaluation of the discrete integral.
-    Returns the demodulated signal.
+    simulation3d(tr::Trajectory, image::Array{ComplexF64,3}, correctionMap=[];
+              opName="fast", senseMaps=[], verbose=true, kargs...)
+
+Transforms a given image to k-space Domain 3d Acquisition.
+The Fourier integrals can be evaluated exactly or using NFFT
+Returns the demodulated signal.
 
 ...
 # Arguments
-* `tr::Abstract3DTrajectory` : Three-dimensional Trajectory
-* `image::Matrix` : Image to be transformed
-* `correctionMap=[]` : Correctionmap is summed up of the field offresonance and relaxation
-* `verbose=true` : Prints the progress if true
+* `tr::Trajectory`             - three-dimensional Trajectory
+* `image::Array{ComplexF64,3}` - image to be transformed
+* (`correctionMap=[]`)         - sum of the field offresonance (imaginary) map and relaxation map (real)
+* (`opName="fast")             - name of operator to use ("explicit" or "fast")
+* (`sensmaps=[]`)              - array of coil sensitivities
+* (`verbose=true`)             - prints the progress if true
+* `kargs...`                   - addional keyword arguments
 ...
 
 """
@@ -165,10 +182,33 @@ function simulation3d(tr::Trajectory, image::Array{ComplexF64,3}, correctionMap=
     verbose && next!(p)
   end
 
-  return AcquisitionData(tr, kdata ,numCoils=nc,numSlices=1,encodingSize=[nx,ny,nz])
+  return AcquisitionData(tr,kdata,encodingSize=[nx,ny,nz])
 end
 
-# FIXME: this only works for 3d or for one slice
+"""
+    simulation(seq::AbstractSequence, tr::Vector{Trajectory}, image::Array{ComplexF64,3}
+                    ; opName="fast", r1map=[], r2map=[], fmap=[], senseMaps=[]
+                    , verbose=true, kargs...)
+
+Simulate k-space data for all echoes of a pulse sequence.
+The echo intensities are simulated using the EPG formalism
+The Fourier integrals can be evaluated exactly or using NFFT
+
+...
+# Arguments
+* `seq::AbstractSequence`      - pulse sequence
+* `tr::Vector{Trajectory}`     - trajectories for all contrasts
+* `image::Array{ComplexF64,3}` - image to be transformed
+* (`r1map=[]`)                 - R1 map of the object (real)
+* (`r2map=[]`)                 - R2 map of the object (real) / (R2* for GRE sequences)
+* (`fmap=[]`)                  - fieldmap (real)
+* (`opName="fast")             - name of operator to use ("explicit" or "fast")
+* (`sensmaps=[]`)              - array of coil sensitivities
+* (`verbose=true`)             - prints the progress if true
+* `kargs...`                   - addional keyword arguments
+...
+
+"""
 function simulation(seq::AbstractSequence, tr::Vector{Trajectory}
                     , image::Array{ComplexF64,3}
                     ; opName="fast"
@@ -179,7 +219,7 @@ function simulation(seq::AbstractSequence, tr::Vector{Trajectory}
                     , verbose=true
                     , kargs...)
   nx,ny,nz = size(image)
-  ne = numEchoes(seq)
+  ne = numContrasts(seq)
 
   correctionMap = zeros(ComplexF64,nx,ny,nz)
   if isempty(r1map)
@@ -212,9 +252,9 @@ function simulation(seq::AbstractSequence, tr::Vector{Trajectory}
   out = Vector{Matrix{ComplexF64}}(undef,ne)
 
   if verbose
-    p = Progress(numEchoes(seq), 1, "Simulating data...")
+    p = Progress(numContrasts(seq), 1, "Simulating data...")
   end
-  # tr = [trajectory(seq,i) for i=1:numEchoes(seq)]
+  # tr = [trajectory(seq,i) for i=1:numContrasts(seq)]
   for i = 1:ne
     te = echoTime(tr[i])
     nodes = kspaceNodes(tr[i])
@@ -235,20 +275,38 @@ function simulation(seq::AbstractSequence, tr::Vector{Trajectory}
     # end
   end
 
-  dims(tr[1])==2 ? numSl=nz : numSl=1 
-  return AcquisitionData(tr, reshape(out,ne,1,1), numEchoes=ne, numCoils=nc, numSlices=numSl,encodingSize=[nx,ny,nz])
+  dims(tr[1])==2 ? numSl=nz : numSl=1
+  return AcquisitionData(tr, reshape(out,ne,1,1), encodingSize=[nx,ny,nz])
 end
 
+"""
+    simulation(tr::Trajectory, image::Array{ComplexF64}, correctionMap = []; opName="fast"
+              , senseMaps=[], verbose=true, kargs...)
+
+Transforms a given image to k-space Domain.
+Dispatches whether the trajectory is 2d or 3d
+The Fourier integrals can be evaluated exactly or using NFFT
+Returns the demodulated signal.
+
+...
+# Arguments
+* `tr::Trajectory`             - three-dimensional Trajectory
+* `image::Array{ComplexF64,3}` - image to be transformed
+* (`correctionMap=[]`)         - sum of the field offresonance (imaginary) map and relaxation map (real)
+* (`opName="fast")             - name of operator to use ("explicit" or "fast")
+* (`sensmaps=[]`)              - array of coil sensitivities
+* (`verbose=true`)             - prints the progress if true
+* `kargs...`                   - addional keyword arguments
+...
+
+"""
 function simulation(tr::Trajectory
-                        , image::Array{ComplexF64}
-                        , correctionMap = []
-                        ; opName="fast"
-                        , r1map=[]
-                        , r2map=[]
-                        , fmap=[]
-                        , senseMaps=[]
-                        , verbose=true
-                        , kargs...)
+                    , image::Array{ComplexF64}
+                    , correctionMap = []
+                    ; opName="fast"
+                    , senseMaps=[]
+                    , verbose=true
+                    , kargs...)
 
   ndims(image) > 2 ? numSlices=size(image,3) : numSlices=1
   image = reshape(image,size(image)[1],size(image)[2],numSlices)
@@ -277,7 +335,7 @@ function simulateTempSubspace(seq::AbstractSequence
   # simulate training data
   Nr1 = length(r1sample)
   Nr2 = length(r2sample)
-  signal = Array(Float64,numEchoes(seq),Nr1*Nr2)
+  signal = Array(Float64,numContrasts(seq),Nr1*Nr2)
   param = Array(Float64,Nr1*Nr2,2)                # simulated parameters
   for i=1:Nr1, j=1:Nr2
     signal[:,(i-1)*Nr2+j] = abs( echoAmplitudes( seq, r1sample[i], r2sample[j] ) )
@@ -292,17 +350,19 @@ function simulateTempSubspace(seq::AbstractSequence
 end
 
 """
-    Getting (simulated) k-data with the help of NFFTs with lower computational effort
+  Getting (simulated) k-data with the help of NFFTs with lower computational effort
 
-...
+  ...
 # Arguments
-* `tr::Abstract2DTrajectory` : Two-dimensional Trajectory
-* `image::Matrix` : Image to be transformed
-* `correctionMap=[]` : Correctionmap is summed up of the field offresonance and relaxation
-* `alpha::Float64 = 1.75` : Oversampling factor
-* `m::Float64=4.0` : Kenrel size
-* `K::Int64=28` : Rank how much coefficients will be used to approx. correctionterm
-* `method="nfft"` : Which Method used to get the approx. coefficients of correctionterm
+* `tr::Abstract2DTrajectory` - Two-dimensional Trajectory
+* `image::Matrix`            - Image to be transformed
+* `correctionMap=[]`         - Correctionmap is summed up of the field offresonance and relaxation
+* `alpha::Float64 = 1.75`    - Oversampling factor
+* `m::Float64=4.0`           - Kenrel size
+* `K::Int64=28`              - Rank how much coefficients will be used to approx. correctionterm
+* `method="nfft"`            - Which Method used to get the approx. coefficients of correctionterm
+* (`sensmaps=[]`)            - array of coil sensitivities
+* `kargs...`                 - addional keyword arguments
 ...
 
 """
@@ -323,6 +383,23 @@ function simulation_fast(tr::Trajectory
   return simulation(tr, ComplexF64.(image), correctionMap;opName="fast", alpha=alpha,m=m,K=K,method=method,senseMaps=senseMaps,kargs...)
 end
 
+"""
+  Getting (simulated) k-data using an explicit evaluation of the encoding operator
+
+...
+# Arguments
+* `tr::Abstract2DTrajectory` - Two-dimensional Trajectory
+* `image::Matrix`            - Image to be transformed
+* `correctionMap=[]`         - Correctionmap is summed up of the field offresonance and relaxation
+* `alpha::Float64 = 1.75`    - Oversampling factor
+* `m::Float64=4.0`           - Kenrel size
+* `K::Int64=28`              - Rank how much coefficients will be used to approx. correctionterm
+* `method="nfft"`            - Which Method used to get the approx. coefficients of correctionterm
+* (`sensmaps=[]`)            - array of coil sensitivities
+* `kargs...`                 - addional keyword arguments
+...
+
+"""
 function simulation_explicit(tr::Trajectory
                         , image::Matrix
                         , correctionMap = []
@@ -341,7 +418,11 @@ function simulation_explicit(tr::Trajectory
 end
 
 """
-  Adds average white gaussian noise to the signal
+  Adds average white gaussian noise to the signal x
+
+# Arguments
+* `x::Vector`     - signal vector
+* 'snr::Float64'  - target SNR
 
 """
 function addNoise(x::Vector, snr::Float64, complex= true)
@@ -358,17 +439,28 @@ function addNoise(x::Vector, snr::Float64, complex= true)
   return x+noise
 end
 
-function addNoise(acqData::AcquisitionData, snr::Float64)
-  # noisyData = addNoise(acqData.kdata, snr, true)
+"""
+  return AcquisitionData with white gaussian noise
 
-  # return AcquisitionData(acqData.sequenceInfo, acqData.traj, noisyData, acqData.numEchoes,
-  #                        acqData.numCoils, acqData.numSlices, acqData.samplePointer,
-  #                        acqData.subsampleIndices, acqData.encodingSize, acqData.fov)
+# Arguments
+* `acqData::AcquisitionData`  - AcquisitionData
+* 'snr::Float64'              - target SNR
+
+"""
+function addNoise(acqData::AcquisitionData, snr::Float64)
   acqData2 = deepcopy(acqData)
   addNoise!(acqData2,snr)
   return acqData2
 end
 
+"""
+  add white gaussian noise to AcquisitionData with (in-place)
+
+# Arguments
+* `acqData::AcquisitionData`  - AcquisitionData
+* 'snr::Float64'              - target SNR
+
+"""
 function addNoise!(acqData::AcquisitionData, snr::Float64)
   for i=1:length(acqData.kdata)
     acqData.kdata[i][:] .= addNoise(vec(acqData.kdata[i]),snr,true)[:]

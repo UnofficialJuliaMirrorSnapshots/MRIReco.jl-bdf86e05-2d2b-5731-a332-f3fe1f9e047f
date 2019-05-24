@@ -1,54 +1,124 @@
 export EncodingOp, lrEncodingOp, fourierEncodingOp2d, fourierEncodingOp3d
 
-#########################
-# simple Fourier Encoding
-#########################
+"""
+    encodingOps2d_simple(acqData::AcquisitionData, shape::NTuple{2,Int64}
+                              ; slice=1
+                              , correctionMap::Array{ComplexF64}=ComplexF64[]
+                              , method::String="nfft")
+
+generates an Array of LinearOperators which describe 2d signal encoding of the individual
+contrasts in an MRI acquisition (for a given slice).
+
+# Arguments
+* `acqData::AcquisitionData`            - AcquisitionData object
+* `shape::NTuple{2,Int64}`              - size of image to be encoded/reconstructed
+* `slice=1`                             - slice to be encoded/reconstructed
+* (`correctionMap::Array{ComplexF64}`)  - fieldmap for the correction of off-resonance effects
+* (`method::String="nfft"`)             - method to use for time-segmentation when correctio field inhomogeneities
+"""
 function encodingOps2d_simple(acqData::AcquisitionData, shape::NTuple{2,Int64}
                               ; slice=1
                               , correctionMap::Array{ComplexF64}=ComplexF64[]
                               , method::String="nfft")
 
-  tr = [trajectory(acqData,i) for i=1:acqData.numEchoes]
+  numContr = numContrasts(acqData)
+  tr = [trajectory(acqData,i) for i=1:numContr]
   idx = acqData.subsampleIndices
-  return [fourierEncodingOp2d(shape, tr[i], "fast", slice=slice, subsampleIdx=idx[i], correctionMap=correctionMap, method=method) for i=1:acqData.numEchoes]
+  return [fourierEncodingOp2d(shape, tr[i], "fast", slice=slice, subsampleIdx=idx[i], correctionMap=correctionMap, method=method) for i=1:numContr]
 end
 
+"""
+    encodingOps3d_simple(acqData::AcquisitionData, shape::NTuple{2,Int64}
+                              ; correctionMap::Array{ComplexF64}=ComplexF64[]
+                              , method::String="nfft")
+
+generates an Array of LinearOperators which describe 3d signal encoding of the individual
+contrasts&coils in an MRI acquisition (for a given slice).
+Arguments are the same as in the 2d case, with the exception that shape is of type `NTuple{3,Int64}`
+and the considered slice is not specified.
+"""
 function encodingOps3d_simple(acqData::AcquisitionData, shape::NTuple{3,Int64}
                               ; correctionMap=ComplexF64[]
                               , method::String="nfft")
 
-  tr = [trajectory(acqData,i) for i=1:acqData.numEchoes]
+  numContr = numContrasts(acqData)
+  tr = [trajectory(acqData,i) for i=1:numContr]
   idx = acqData.subsampleIndices
-  return [fourierEncodingOp3d(shape, tr[i], "fast", subsampleIdx=idx[i], method=method) for i=1:acqData.numEchoes]
+  return [fourierEncodingOp3d(shape, tr[i], "fast", subsampleIdx=idx[i], method=method) for i=1:numContr]
 end
 
-##########################################
-# fourier encoding with coil sensitivities
-##########################################
+"""
+    encodingOps2d_parallel(acqData::AcquisitionData, shape::NTuple{2,Int64}
+                              , senseMaps::Array{ComplexF64}
+                              ; slice=1
+                              , correctionMap::Array{ComplexF64}=ComplexF64[]
+                              , method::String="nfft")
+
+generates an Array of LinearOperators which describe 2d signal encoding of the individual
+contrasts in an MRI acquisition (for a given slice). The different coils are taken into account
+in terms of their sensitivities
+
+# Arguments
+* `acqData::AcquisitionData`            - AcquisitionData object
+* `shape::NTuple{2,Int64}`              - size of image to be encoded/reconstructed
+* `senseMaps::Array{ComplexF64}`        - coil sensitivities
+* `slice=1`                             - slice to be encoded/reconstructed
+* (`correctionMap::Array{ComplexF64}`)  - fieldmap for the correction of off-resonance effects
+* (`method::String="nfft"`)             - method to use for time-segmentation when correctio field inhomogeneities
+"""
 function encodingOps2d_parallel(acqData::AcquisitionData, shape::NTuple{2,Int64}
                                 , senseMaps::Array{ComplexF64}
                                 ; slice=1
                                 , correctionMap::Array{ComplexF64}=ComplexF64[]
                                 , method::String="nfft")
+
+  numContr, numChan = numContrasts(acqData), numChannels(acqData)
   # fourier operators
   ft = encodingOps2d_simple(acqData, shape, slice=slice, correctionMap=correctionMap)
-  S = SensitivityOp(reshape(senseMaps[:,:,slice,:],:,acqData.numCoils),1)
-  return [ diagOp( [ft[i] for k=1:acqData.numCoils]... )*S for i=1:acqData.numEchoes]
+  S = SensitivityOp(reshape(senseMaps[:,:,slice,:],:,numChan),1)
+  return [ diagOp( [ft[i] for k=1:numChan]... )*S for i=1:numContr]
 end
 
+"""
+    encodingOps3d_parallel(acqData::AcquisitionData, shape::NTuple{2,Int64}
+                              , senseMaps::Array{ComplexF64}
+                              ; correctionMap::Array{ComplexF64}=ComplexF64[]
+                              , method::String="nfft")
+
+generates an Array of LinearOperators which describe 3d signal encoding of the individual
+contrasts in an MRI acquisition (for a given slice). The different coils are taken into account
+in terms of their sensitivities
+Arguments are the same as in the 2d case, with the exception that shape is of type `NTuple{3,Int64}`
+and the considered slice is not specified.
+"""
 function encodingOps3d_parallel(acqData::AcquisitionData, shape::NTuple{3,Int64}
                                 , senseMaps::Array{ComplexF64}
                                 ; correctionMap::Array{ComplexF64}=ComplexF64[]
                                 , method::String="nfft")
+
+  numContr, numChan = numContrasts(acqData), numChannels(acqData)
   # fourier operators
   ft = encodingOps3d_simple(acqData, shape, correctionMap=correctionMap)
-  S = SensitivityOp(reshape(senseMaps,:,acqData.numCoils),1)
-  return [ diagOp( [ft[i] for k=1:acqData.numCoils]... )*S for i=1:acqData.numEchoes]
+  S = SensitivityOp(reshape(senseMaps,:,numChan),1)
+  return [ diagOp( [ft[i] for k=1:numChan]... )*S for i=1:numContr]
 end
 
-#############################
-# multi echo fourier encoding
-#############################
+"""
+    encodingOp2d_multiEcho(acqData::AcquisitionData, shape::NTuple{2,Int64}
+                                ; slice::Int64=1
+                                , correctionMap::Array{ComplexF64}=ComplexF64[]
+                                , method::String="nfft")
+
+generates a LinearOperator which describe combined 2d signal encoding of all
+the contrasts in an MRI acquisition (for a given slice).
+
+# Arguments
+* `acqData::AcquisitionData`            - AcquisitionData object
+* `shape::NTuple{2,Int64}`              - size of image to be encoded/reconstructed
+* `slice=1`                             - slice to be encoded/reconstructed
+* (`correctionMap::Array{ComplexF64}`)  - fieldmap for the correction of off-resonance effects
+* (`method::String="nfft"`)             - method to use for time-segmentation when correctio field inhomogeneities
+"""
 function encodingOp2d_multiEcho(acqData::AcquisitionData, shape::NTuple{2,Int64}
                                 ; slice::Int64=1
                                 , correctionMap::Array{ComplexF64}=ComplexF64[]
@@ -58,46 +128,88 @@ function encodingOp2d_multiEcho(acqData::AcquisitionData, shape::NTuple{2,Int64}
   return diagOp(ft...)
 end
 
+"""
+    encodingOp3d_multiEcho(acqData::AcquisitionData, shape::NTuple{2,Int64}
+                                ; correctionMap::Array{ComplexF64}=ComplexF64[])
+
+generates a LinearOperator which describe combined 3d signal encoding of all
+the contrasts in an MRI acquisition (for a given slice).
+Arguments are the same as in the 2d case, with the exception that shape is of type `NTuple{3,Int64}`
+and the considered slice is not specified.
+"""
 function encodingOp3d_multiEcho(acqData::AcquisitionData, shape::NTuple{3,Int64}; correctionMap::Array{ComplexF64,3}=ComplexF64[])
   # fourier operators
   ft = encodingOps3d_simple(acqData, shape, correctionMap=correctionMap)
   return diagOp(ft...)
 end
 
-#####################################################
-# multi echo fourier encoding with coil sensitivities
-#####################################################
+"""
+    encodingOp2d_multiEcho_parallel(acqData::AcquisitionData, shape::NTuple{2,Int64}
+                                          , senseMaps::Array{ComplexF64}
+                                          ; slice=1
+                                          , correctionMap::Array{ComplexF64}=ComplexF64[]
+                                          , method::String="nfft")
+
+generates a LinearOperator which describe combined 3d signal encoding of all
+the contrasts in an MRI acquisition (for a given slice). The different coils are taken into account
+in terms of their sensitivities
+
+# Arguments
+* `acqData::AcquisitionData`            - AcquisitionData object
+* `shape::NTuple{2,Int64}`              - size of image to be encoded/reconstructed
+* `senseMaps::Array{ComplexF64}`        - coil sensitivities
+* `slice=1`                             - slice to be encoded/reconstructed
+* (`correctionMap::Array{ComplexF64}`)  - fieldmap for the correction of off-resonance effects
+* (`method::String="nfft"`)             - method to use for time-segmentation when correctio field inhomogeneities
+"""
 function encodingOp2d_multiEcho_parallel(acqData::AcquisitionData, shape::NTuple{2,Int64}
                                           , senseMaps::Array{ComplexF64}
                                           ; slice=1
                                           , correctionMap::Array{ComplexF64}=ComplexF64[]
                                           , method::String="nfft")
+
+  numChan = numChannels(acqData)
   # fourier operators
   ft = encodingOps2d_simple(acqData, shape, slice=slice, correctionMap=correctionMap)
-  S = SensitivityOp(reshape(senseMaps[:,:,slice,:],:,acqData.numCoils),1)
-  return diagOp( repeat(ft, acqData.numCoils)... )*S
+  S = SensitivityOp(reshape(senseMaps[:,:,slice,:],:,numChan),1)
+  return diagOp( repeat(ft, numChan)... )*S
 end
 
+"""
+    encodingOp3d_multiEcho_parallel(acqData::AcquisitionData, shape::NTuple{2,Int64}
+                                          , senseMaps::Array{ComplexF64}
+                                          ; correctionMap::Array{ComplexF64}=ComplexF64[]
+                                          , method::String="nfft")
+
+generates a LinearOperator which describe combined 3d signal encoding of all
+the contrasts in an MRI acquisition (for a given slice). The different coils are taken into account
+in terms of their sensitivities
+Arguments are the same as in the 2d case, with the exception that shape is of type `NTuple{3,Int64}`
+and the considered slice is not specified.
+"""
 function encodingOp3d_multiEcho_parallel(acqData::AcquisitionData, shape::NTuple{3,Int64}
                                           , senseMaps::Array{ComplexF64}
                                           ; correctionMap::Array{ComplexF64}=ComplexF64[]
                                           , method::String="nfft")
+
+  numChan = numChannels(acqData)
   # fourier operators
   ft = encodingOps3d_simple(acqData, shape, correctionMap=correctionMap)
-  S = SensitivityOp(reshape(senseMaps,:,acqData.numCoils),1)
-  return diagOp( repeat(ft, acqData.numCoils)... )*S
+  S = SensitivityOp(reshape(senseMaps,:,numChan),1)
+  return diagOp( repeat(ft, numChan)... )*S
 end
 
 ###################################
 # Encoding with low rank projection
 ###################################
-function lrEncodingOp(acqData::AcquisitionData,params::Dict; numEchoes::Int64=1, parallel::Bool=false,)
+function lrEncodingOp(acqData::AcquisitionData,params::Dict; numContr::Int64=1, parallel::Bool=false,)
 
+  numChan = numChannels(acqData)
   # low rank operator
   N=prod(params[:shape])
   subspace = get( params, :phi, Matrix{Float64}(I,N,N) )
   K = size(subspace,2)
-  Φ = MapSliceOp(subspace[:,:,1],2,(N, K, acqData.numCoils), (N, numEchoes, acqData.numCoils))
+  Φ = MapSliceOp(subspace[:,:,1],2,(N, K, acqData.numChannels), (N, numContr, numChan))
 
   # Fourier Operator
   tr = trajectory(acqData,1)
@@ -107,7 +219,7 @@ function lrEncodingOp(acqData::AcquisitionData,params::Dict; numEchoes::Int64=1,
   # coil sensitivities in case of SENSE-reconstruction
   if parallel
     S = SensitivityOp(params[:senseMaps][:,:],K)
-    E = diagOp( [ft for i=1:acqData.numCoils*K]... )*S
+    E = diagOp( [ft for i=1:numChan*K]... )*S
   else
     E = diagOp( [ft for i=1:K]... )
   end
@@ -116,30 +228,17 @@ function lrEncodingOp(acqData::AcquisitionData,params::Dict; numEchoes::Int64=1,
   if get(params,:sampling, nothing) == "binary"
     M = SamplingOp(Array{Bool}(acqData.subsampleIndices))
   else
-    M = SamplingOp(acqData.subsampleIndices,(N, numEchoes, acqData.numCoils))
+    M = SamplingOp(acqData.subsampleIndices,(N, numContr, numChan))
   end
 
   return M*Φ*E
 
 end
 
-#
-# return Fourier encoding operator with(out) correction when cmap is (not) specified
-#
-# function fourierEncodingOp2d(tr::Trajectory, params; subsampleIdx::Vector{Int64}=Int64[], slice::Int64=0, method::String="nfft")
-#   shape = params[:shape]
-#   opName="fast"
-#   if get(params,:explicit,false)
-#     opName="explicit"
-#   end
-#
-#   return fourierEncodingOp2d(shape,tr,opName;subsampleIdx=subsampleIdx,slice=slice,params...)
-# end
-
 """
 return 2d Fourier encoding operator (either Explicit or NFFT)
-  opname : "explicit" or "fast"
-  slice : slice to which the operator will be applied
+  * `opname` : "explicit" or "fast"
+  * `slice` : slice to which the operator will be applied
   echoImage : calculate signal evolution relative to the echo time
 """
 function fourierEncodingOp2d(shape::NTuple{2,Int64}, tr::Trajectory, opName::String;
@@ -172,15 +271,6 @@ function fourierEncodingOp2d(shape::NTuple{2,Int64}, tr::Trajectory, opName::Str
 
   return S*ftOp
 end
-
-# function fourierEncodingOp3d(shape, tr, params; subsampleIdx::Vector{Int64}=Int64[])
-#   opName="fast"
-#   if get(params,:explicit,false)
-#     opName="explicit"
-#   end
-#
-#   return fourierEncodingOp3d(shape,tr,opName;params...)
-# end
 
 """
 return 3d Fourier encoding operator (either Explicit, FFT or NFFT)

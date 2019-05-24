@@ -1,18 +1,18 @@
 export estimateCoilSensitivities, mergeChannels, espirit
 
 """
-  estimateCoilSensitivities(I::AbstractArray{T,5})
+    estimateCoilSensitivities(I::AbstractArray{T,5})
 
 Estimates the coil sensitivity based on a reconstruction where the data
 from each coil has been reconstructed individually
 """
 function estimateCoilSensitivities(I::AbstractArray{T,5}) where T
-  numCoils = size(I,5)
+  numChan = size(I,5)
 
   I_sum = sqrt.( sum(abs.(I).^2, dims=5) )
 
   s = similar(I)
-  for i=1:numCoils
+  for i=1:numChan
     s[:,:,:,:,i] = I[:,:,:,:,i] ./ I_sum
   end
 
@@ -20,19 +20,31 @@ function estimateCoilSensitivities(I::AbstractArray{T,5}) where T
 end
 
 """
-  mergeChannels(I::AbstractArray{T,5})
+    mergeChannels(I::AbstractArray{T,5})
 
 Merge the channels of a multi-coil reconstruction
 """
 mergeChannels(I::AbstractArray{T,5}) where T = sqrt.(sum(abs.(I).^2,dims=5));
 
 """
-  obtain coil sensitivities from a calibration area using ESPIRiT
-  adapted from the MATLAB code by Uecker et al. for the paper'
-   M. Uecker, P. Lai, MJ Murphy, P. Virtue, M Elad, JM Pauly, SS Vasanawala and M Lustig, "ESPIRiT- an
-   eigenvalue approach to autocalibrating parallel MRI: Where SENSE meets GRAPPA", Magn Reson Med, 2013
+    espirit(acqData::AcquisitionData, ksize::NTuple{2,Int64}, ncalib::Int64
+               ; eigThresh_1::Float64=0.02, eigThresh_2::Float64=0.95)
 
-   the matlab code can be found at: http://people.eecs.berkeley.edu/~mlustig/Software.html
+obtains coil sensitivities from a calibration area using ESPIRiT
+adapted from the MATLAB code by Uecker et al. for the paper'
+M. Uecker, P. Lai, MJ Murphy, P. Virtue, M Elad, JM Pauly, SS Vasanawala and M Lustig, "ESPIRiT- an
+eigenvalue approach to autocalibrating parallel MRI: Where SENSE meets GRAPPA", Magn Reson Med, 2013
+
+the matlab code can be found at: http://people.eecs.berkeley.edu/~mlustig/Software.html
+
+# Arguments
+* `acqData::AcquisitionData`  - AcquisitionData
+* `ksize::NTuple{2,Int64}`    - size of the k-space matrix
+* `ncalib::Int64`             - number of calibration points in each dimension
+* `eigThresh_1::Float64=0.02` - threshold for the singular values of the calibration matrix (relative to the largest value)
+* `eigThresh_2::Float64=0.95` - threshold of the image space kernels (if no singular value > eigThresh_2 exists)
+                                , the corresponding pixel has a sensitivity of 0.
+
 """
 function espirit(acqData::AcquisitionData, ksize::NTuple{2,Int64}, ncalib::Int64
                 ; eigThresh_1::Float64=0.02, eigThresh_2::Float64=0.95)
@@ -42,17 +54,18 @@ function espirit(acqData::AcquisitionData, ksize::NTuple{2,Int64}, ncalib::Int64
   end
 
   nx,ny = acqData.encodingSize[1:2]
-  maps = zeros(ComplexF64,acqData.encodingSize[1],acqData.encodingSize[2],acqData.numSlices,acqData.numCoils)
+  numChan, numSl = numChannels(acqData), numSlices(acqData)
+  maps = zeros(ComplexF64,acqData.encodingSize[1],acqData.encodingSize[2],numSl,numChan)
 
-  for slice = 1:acqData.numSlices
+  for slice = 1:numSl
     # form zeropadded array with kspace data
-    kdata = zeros(ComplexF64,nx*ny,acqData.numCoils)
-    for coil = 1:acqData.numCoils
+    kdata = zeros(ComplexF64,nx*ny,numChan)
+    for coil = 1:numChan
       kdata[acqData.subsampleIndices[1],coil] .= kData(acqData,1,coil,slice)
     end
-    kdata = reshape(kdata,nx,ny,acqData.numCoils)
+    kdata = reshape(kdata,nx,ny,numChan)
 
-    calib = crop(kdata,(ncalib,ncalib,acqData.numCoils))
+    calib = crop(kdata,(ncalib,ncalib,numChan))
 
     maps[:,:,slice,:] .= espirit(calib,(nx,ny),ksize,eigThresh_1=eigThresh_1,eigThresh_2=eigThresh_2)
   end
@@ -106,8 +119,8 @@ end
 #         imSize - size of the image to compute maps
 #
 # outputs :
-#         eigenvecs: images representing the eigenvectors (sx,sy,numCoils,numCoils)
-#         eigenvals: images representing th eigenvalues (sx,sy,numCoils)
+#         eigenvecs: images representing the eigenvectors (sx,sy,numChan,numChan)
+#         eigenvals: images representing th eigenvalues (sx,sy,numChan)
 function kernelEig(kernel::Array{T,4},imsize::NTuple{2,Int64}) where T
   nx,ny,nc,nv = size(kernel)
   ksize = (nx,ny)

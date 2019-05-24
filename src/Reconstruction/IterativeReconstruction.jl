@@ -1,10 +1,23 @@
 export reconstruction_simple, reconstruction_multiEcho, reconstruction_multiCoil, reconstruction_multiCoilMultiEcho, reconstruction_lowRank, RecoParameters
 
 """
-  CS-Sense Reconstruction using sparsity in the wavelet domain
+Performs iterative image reconstruction independently for the data of all coils,
+contrasts and slices
+
+# Arguments
+* `acqData::AcquisitionData`            - AcquisitionData object
+* `reconSize::NTuple{2,Int64}`              - size of image to reconstruct
+* `reg::Regularization`                 - Regularization to be used
+* `sparseTrafo::AbstractLinearOperator` - sparsifying transformation
+* `weights::Vector{Vector{ComplexF64}}` - sampling density of the trajectories in acqData
+* `solvername::String`                  - name of the solver to use
+* (`correctionMap::Array{ComplexF64}`)  - fieldmap for the correction of off-resonance effects
+* (`method::String="nfft"`)             - method to use for time-segmentation when correctio field inhomogeneities
+* (`normalize::Bool=false`)             - adjust regularization parameter according to the size of k-space data
+* (`params::Dict{Symbol,Any}`)          - Dict with additional parameters
 """
 function reconstruction_simple( acqData::AcquisitionData
-                              , shape::NTuple{2,Int64}
+                              , reconSize::NTuple{2,Int64}
                               , reg::Regularization
                               , sparseTrafo::AbstractLinearOperator
                               , weights::Vector{Vector{ComplexF64}}
@@ -14,16 +27,18 @@ function reconstruction_simple( acqData::AcquisitionData
                               , normalize::Bool=false
                               , params::Dict{Symbol,Any}=Dict{Symbol,Any}())
 
+  numContr, numChan, numSl = numContrasts(acqData), numChannels(acqData), numSlices(acqData)
+
   # set sparse trafo in reg
   reg.params[:sparseTrafo] = sparseTrafo
 
   # reconstruction
-  Ireco = zeros(ComplexF64, prod(shape), acqData.numSlices, acqData.numEchoes, acqData.numCoils)
-  for k = 1:acqData.numSlices
-    F = encodingOps2d_simple(acqData, shape, slice=k, correctionMap=correctionMap, method=method)
-    for j = 1:acqData.numEchoes
+  Ireco = zeros(ComplexF64, prod(reconSize), numSl, numContr, numChan)
+  for k = 1:numSl
+    F = encodingOps2d_simple(acqData, reconSize, slice=k, correctionMap=correctionMap, method=method)
+    for j = 1:numContr
       W = WeightingOp(weights[j])
-      for i = 1:acqData.numCoils
+      for i = 1:numChan
         kdata = kData(acqData,j,i,k).* weights[j]
 
         reg2 = deepcopy(reg)
@@ -35,23 +50,35 @@ function reconstruction_simple( acqData::AcquisitionData
         I = solve(solver, kdata)
 
         if isCircular( trajectory(acqData, j) )
-          circularShutter!(reshape(I, shape), 1.0)
+          circularShutter!(reshape(I, reconSize), 1.0)
         end
         Ireco[:,k,j,i] = I
       end
     end
   end
 
-  Ireco = reshape(Ireco, shape..., acqData.numSlices, acqData.numEchoes, acqData.numCoils)
+  Ireco = reshape(Ireco, reconSize..., numSl, numContr, numChan)
   return makeAxisArray(Ireco, acqData)
 end
 
 """
-  CS Reconstruction using a joint encoding operator for the different echos
-  and regularization on the multi-echo data
+Performs a iterative image reconstruction jointly for all contrasts. Different slices and coil images
+are reconstructed independently.
+
+# Arguments
+* `acqData::AcquisitionData`            - AcquisitionData object
+* `reconSize::NTuple{2,Int64}`              - size of image to reconstruct
+* `reg::Regularization`                 - Regularization to be used
+* `sparseTrafo::AbstractLinearOperator` - sparsifying transformation
+* `weights::Vector{Vector{ComplexF64}}` - sampling density of the trajectories in acqData
+* `solvername::String`                  - name of the solver to use
+* (`correctionMap::Array{ComplexF64})`  - fieldmap for the correction of off-resonance effects
+* (`method::String="nfft"`)             - method to use for time-segmentation when correctio field inhomogeneities
+* (`normalize::Bool=false`)             - adjust regularization parameter according to the size of k-space data
+* (`params::Dict{Symbol,Any}`)          - Dict with additional parameters
 """
 function reconstruction_multiEcho(acqData::AcquisitionData
-                              , shape::NTuple{2,Int64}
+                              , reconSize::NTuple{2,Int64}
                               , reg::Regularization
                               , sparseTrafo::AbstractLinearOperator
                               , weights::Vector{Vector{ComplexF64}}
@@ -61,16 +88,18 @@ function reconstruction_multiEcho(acqData::AcquisitionData
                               , normalize::Bool=false
                               , params::Dict{Symbol,Any}=Dict{Symbol,Any}())
 
+  numContr, numChan, numSl = numContrasts(acqData), numChannels(acqData), numSlices(acqData)
+
   # set sparse trafo in reg
-  reg.params[:sparseTrafo] = diagOp( repeat([sparseTrafo],acqData.numEchoes) )
+  reg.params[:sparseTrafo] = diagOp( repeat([sparseTrafo],numContr) )
 
   W = WeightingOp( vcat(weights...) )
 
   # reconstruction
-  Ireco = zeros(ComplexF64, prod(shape)*acqData.numEchoes, acqData.numCoils, acqData.numSlices)
-  for i = 1:acqData.numSlices
-    F = encodingOps2d_multiEcho(acqData, shape, slice=k, correctionMap=correctionMap, method=method)
-    for j = 1:acqData.numCoils
+  Ireco = zeros(ComplexF64, prod(reconSize)*numContr, numChan, numSl)
+  for i = 1:numSl
+    F = encodingOps2d_multiEcho(acqData, reconSize, slice=k, correctionMap=correctionMap, method=method)
+    for j = 1:numChan
       kdata = multiEchoData(acqData, j, i) .* weights
 
       reg2 = deepcopy(reg)
@@ -84,15 +113,29 @@ function reconstruction_multiEcho(acqData::AcquisitionData
     end
   end
 
-  Ireco = reshape(Ireco, shape..., acqData.numEchoes, acqData.numCoils, acqData.numSlices)
+  Ireco = reshape(Ireco, reconSize..., numContr, numChan, numSl)
   return makeAxisArray(permutedims(Ireco,[1,2,5,3,4]), acqData)
 end
 
 """
-  CS-Sense Reconstruction
+Performs a SENSE-type iterative image reconstruction. Different slices and contrasts images
+are reconstructed independently.
+
+# Arguments
+* `acqData::AcquisitionData`            - AcquisitionData object
+* `reconSize::NTuple{2,Int64}`              - size of image to reconstruct
+* `reg::Regularization`                 - Regularization to be used
+* `sparseTrafo::AbstractLinearOperator` - sparsifying transformation
+* `weights::Vector{Vector{ComplexF64}}` - sampling density of the trajectories in acqData
+* `solvername::String`                  - name of the solver to use
+* `senseMaps::Array{ComplexF64}`        - coil sensitivities
+* (`correctionMap::Array{ComplexF64}`)  - fieldmap for the correction of off-resonance effects
+* (`method::String="nfft"`)             - method to use for time-segmentation when correctio field inhomogeneities
+* (`normalize::Bool=false`)             - adjust regularization parameter according to the size of k-space data
+* (`params::Dict{Symbol,Any}`)          - Dict with additional parameters
 """
 function reconstruction_multiCoil(acqData::AcquisitionData
-                              , shape::NTuple{2,Int64}
+                              , reconSize::NTuple{2,Int64}
                               , reg::Regularization
                               , sparseTrafo::AbstractLinearOperator
                               , weights::Vector{Vector{ComplexF64}}
@@ -103,16 +146,18 @@ function reconstruction_multiCoil(acqData::AcquisitionData
                               , normalize::Bool=false
                               , params::Dict{Symbol,Any}=Dict{Symbol,Any}())
 
+  numContr, numChan, numSl = numContrasts(acqData), numChannels(acqData), numSlices(acqData)
+
   # set sparse trafo in reg
   reg.params[:sparseTrafo] = sparseTrafo
 
   # solve optimization problem
-  Ireco = zeros(ComplexF64, prod(shape), acqData.numSlices, acqData.numEchoes, 1)
-  for k = 1:acqData.numSlices
-    E = encodingOps2d_parallel(acqData, shape, senseMaps, slice=k, correctionMap=correctionMap, method=method)
-    for j = 1:acqData.numEchoes
-      W = WeightingOp(weights[j],acqData.numCoils)
-      kdata = multiCoilData(acqData, j, k) .* repeat(weights[j], acqData.numCoils)
+  Ireco = zeros(ComplexF64, prod(reconSize), numSl, numContr, 1)
+  for k = 1:numSl
+    E = encodingOps2d_parallel(acqData, reconSize, senseMaps, slice=k, correctionMap=correctionMap, method=method)
+    for j = 1:numContr
+      W = WeightingOp(weights[j],numChan)
+      kdata = multiCoilData(acqData, j, k) .* repeat(weights[j], numChan)
 
       reg2 = deepcopy(reg)
       if normalize
@@ -124,18 +169,35 @@ function reconstruction_multiCoil(acqData::AcquisitionData
       I = solve(solver, kdata)
 
       if isCircular( trajectory(acqData, j) )
-        circularShutter!(reshape(I, shape), 1.0)
+        circularShutter!(reshape(I, reconSize), 1.0)
       end
       Ireco[:,k,j] = I
     end
   end
 
-  Ireco = reshape(Ireco, shape..., acqData.numSlices, acqData.numEchoes, 1)
+  Ireco = reshape(Ireco, reconSize..., numSl, numContr, 1)
   return makeAxisArray(Ireco, acqData)
 end
 
+"""
+Performs a SENSE-type iterative image reconstruction which reconstructs all contrasts jointly.
+Different slices are reconstructed independently.
+
+# Arguments
+* `acqData::AcquisitionData`            - AcquisitionData object
+* `reconSize::NTuple{2,Int64}`              - size of image to reconstruct
+* `reg::Regularization`                 - Regularization to be used
+* `sparseTrafo::AbstractLinearOperator` - sparsifying transformation
+* `weights::Vector{Vector{ComplexF64}}` - sampling density of the trajectories in acqData
+* `solvername::String`                  - name of the solver to use
+* `senseMaps::Array{ComplexF64}`        - coil sensitivities
+* (`correctionMap::Array{ComplexF64}`)  - fieldmap for the correction of off-resonance effects
+* (`method::String="nfft"`)             - method to use for time-segmentation when correctio field inhomogeneities
+* (`normalize::Bool=false`)             - adjust regularization parameter according to the size of k-space data
+* (`params::Dict{Symbol,Any}`)          - Dict with additional parameters
+"""
 function reconstruction_multiCoilMultiEcho(acqData::AcquisitionData
-                              , shape::NTuple{2,Int64}
+                              , reconSize::NTuple{2,Int64}
                               , reg::Regularization
                               , sparseTrafo::AbstractLinearOperator
                               , weights::Vector{Vector{ComplexF64}}
@@ -146,16 +208,18 @@ function reconstruction_multiCoilMultiEcho(acqData::AcquisitionData
                               , normalize::Bool=false
                               , params::Dict{Symbol,Any}=Dict{Symbol,Any}())
 
+  numContr, numChan, numSl = numContrasts(acqData), numChannels(acqData), numSlices(acqData)
+
   # set sparse trafo in reg
-  reg.params[:sparseTrafo] = diagOp( repeat([sparseTrafo],acqData.numEchoes) )
+  reg.params[:sparseTrafo] = diagOp( repeat([sparseTrafo],numContr) )
 
-  W = WeightingOp( vcat(weights)..., acqData.numCoils )
+  W = WeightingOp( vcat(weights)..., numChan )
 
-  Ireco = zeros(ComplexF64, prod(shape), acqData.numEchoes, acqData.numSlices)
-  for i = 1:acqData.numSlices
-    E = encodingOp_2d_multiEcho_parallel(acqData, shape, senseMaps, slice=k, correctionMap=correctionMap, method=method)
+  Ireco = zeros(ComplexF64, prod(reconSize), numContr, numSl)
+  for i = 1:numSl
+    E = encodingOp_2d_multiEcho_parallel(acqData, reconSize, senseMaps, slice=k, correctionMap=correctionMap, method=method)
 
-    kdata = multiCoilMultiEchoData(acqData, i) .* repeat(weights, acqData.numCoils)
+    kdata = multiCoilMultiEchoData(acqData, i) .* repeat(weights, numChan)
 
     reg2 = deepcopy(reg)
     if normalize
@@ -166,15 +230,26 @@ function reconstruction_multiCoilMultiEcho(acqData::AcquisitionData
     Ireco[:,:,i] = solve(solver, kdata)
   end
 
-  Ireco = reshape( permutedims(Ireco, [1,3,2]), recoParams[:shape]..., acqData.numSlices, acqData.numEchoes )
+  Ireco = reshape( permutedims(Ireco, [1,3,2]), recoParams[:reconSize]..., numSl, numContr )
 end
 
 
-###########################################################################
-# setup regularization, sparsifying transform  and density weights for reco
-###########################################################################
+"""
+Auxilary struct that holds parameters relevant for image reconstruction
+
+# Fields
+* `reconSize::NTuple{2,Int64}`              - size of image to reconstruct
+* `weights::Vector{Vector{ComplexF64}}` - sampling density of the trajectories in acqData
+* `sparseTrafo::AbstractLinearOperator` - sparsifying transformation
+* `reg::Regularization`                 - Regularization to be used
+* `normalize::Bool`                     - adjust regularization parameter according to the size of k-space data
+* `solvername::String`                  - name of the solver to use
+* `senseMaps::Array{ComplexF64}`        - coil sensitivities
+* `correctionMap::Array{ComplexF64}`    - fieldmap for the correction of off-resonance effects
+* `method::String="nfft"`               - method to use for time-segmentation when correctio field inhomogeneities
+"""
 mutable struct RecoParameters{N}
-  shape::NTuple{N,Int64}
+  reconSize::NTuple{N,Int64}
   weights::Vector{Vector{ComplexF64}}
   sparseTrafo::AbstractLinearOperator
   reg::Regularization
@@ -185,36 +260,55 @@ mutable struct RecoParameters{N}
   method::String
 end
 
+
+"""
+    setupIterativeReco(acqData::AcquisitionData, recoParams::Dict)
+
+builds relevant parameters and operators from the entries in `recoParams`
+
+# relevant parameters
+* `reconSize::NTuple{2,Int64}`              - size of image to reconstruct
+* `weights::Vector{Vector{ComplexF64}}` - sampling density of the trajectories in acqData
+* `sparseTrafo::AbstractLinearOperator` - sparsifying transformation
+* `reg::Regularization`                 - Regularization to be used
+* `normalize::Bool`                     - adjust regularization parameter according to the size of k-space data
+* `solvername::String`                  - name of the solver to use
+* `senseMaps::Array{ComplexF64}`        - coil sensitivities
+* `correctionMap::Array{ComplexF64}`    - fieldmap for the correction of off-resonance effects
+* `method::String="nfft"`               - method to use for time-segmentation when correctio field inhomogeneities
+
+`sparseTrafo` and `reg` can also be speficied using their names in form of a string.
+"""
 function setupIterativeReco(acqData::AcquisitionData, recoParams::Dict)
 
-  red3d = dims(trajectory(acqData,1))==2 && length(recoParams[:shape])==3
+  red3d = dims(trajectory(acqData,1))==2 && length(recoParams[:reconSize])==3
   if red3d  # acqData is 3d data converted to 2d
-    shape = (recoParams[:shape][2], recoParams[:shape][3])
-    recoParams[:shape] = shape
+    reconSize = (recoParams[:reconSize][2], recoParams[:reconSize][3])
+    recoParams[:reconSize] = reconSize
   else  # regular case
-    shape = recoParams[:shape]
+    reconSize = recoParams[:reconSize]
   end
 
   # density weights
   densityWeighting = get(recoParams,:densityWeighting,true)
   if densityWeighting
-    weights = samplingDensity(acqData,shape)
+    weights = samplingDensity(acqData,reconSize)
   else
-    weights = [1.0/sqrt(prod(shape)) for echo=1:acqData.numEcoes]
+    weights = [1.0/sqrt(prod(reconSize)) for echo=1:acqData.numEcoes]
   end
 
   # sparsifying transform
-  if haskey(recoParams,:sparseTrafo)
+  if haskey(recoParams,:sparseTrafo) && typeof(recoParams[:sparseTrafo]) != String
     sparseTrafo = recoParams[:sparseTrafo]
   else
-    sparseTrafoName = get(recoParams, :sparseTrafoName, "Wavelet")
-    sparseTrafo = SparseOp(sparseTrafoName, shape; recoParams...)
+    sparseTrafoName = get(recoParams, :sparseTrafo, "nothing")
+    sparseTrafo = SparseOp(sparseTrafoName, reconSize; recoParams...)
   end
 
   # bare regularization (without sparsifying transform)
   regName = get(recoParams, :regularization, "L1")
   λ = get(recoParams,:λ,0.0)
-  reg = Regularization(regName, λ; recoParams...)
+  reg = Regularization(regName, λ; shape=reconSize, recoParams...)
 
   # normalize regularizer ?
   normalize = get(recoParams, :normalizeReg, false)
@@ -232,5 +326,5 @@ function setupIterativeReco(acqData::AcquisitionData, recoParams::Dict)
   cmap = get(recoParams, :correctionMap, ComplexF64[])
   method = get(recoParams, :method, "nfft")
 
-  return RecoParameters(shape, weights, sparseTrafo, reg, normalize, solvername, senseMaps, cmap, method)
+  return RecoParameters(reconSize, weights, sparseTrafo, reg, normalize, solvername, senseMaps, cmap, method)
 end

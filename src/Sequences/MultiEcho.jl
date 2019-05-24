@@ -1,18 +1,26 @@
-export MESequence, echoAmplitudes, flipAngles, numEchoes, T_echo
+export MESequence, echoAmplitudes, flipAngles, numContrasts, T_echo
 
-#=
-  General Multi-Echo sequence with variable flip angles and TR.
-  -----------------------
-  The phase of the preparation pulse has a phase of -90°
-  in order to fulfill CPMG conditions
+"""
+General Multi-Echo sequence with variable flip angles and TR.
+-----------------------
+The phase of the excitation pulse has a phase of -90°
+in order to fulfill CPMG conditions.
 
-  echoes apperat at times T_echo, 2*T_echo,..., numEchoes*T_echo after the preparation pulse
-=#
+For simplicity instantaneous pulses are assumed.
+
+echoes apperat at times T_echo, 2*T_echo,..., numContrasts*T_echo after the excitation pulse
+
+# Fields
+* `excitationAngle::Float64`            - flip angle of the excitation pulse
+* `refocusingAngles :: Vector{Float64}` - flip angles of the refocusing pulses
+* `T_rf::Vector{Float64}`               - times of the refocusing pulses relative to the excitation pulse
+* `T_echo:: Vector{Float64}`            - echo times relative to the excitation pulse
+"""
 mutable struct MESequence <: AbstractSequence
   excitationAngle::Float64
   refocusingAngles :: Vector{Float64}   # flip angles
   T_rf::Vector{Float64}                 # times of refocusing pulses
-  T_echo:: Vector{Float64}                 # echo times
+  T_echo:: Vector{Float64}              # echo times
 end
 
 function MESequence(; T_echo::Union{Float64,Vector{Float64}}=[0.0]
@@ -35,36 +43,73 @@ function MESequence(; T_echo::Union{Float64,Vector{Float64}}=[0.0]
   return MESequence(excitationAngle,refAng_vec, T_rf_vec, T_echo_vec)
 end
 
-numEchoes(seq::MESequence)  = length(seq.T_echo)
+"""
+    numContrasts(seq::MESequence)
 
+returns the number of echoes of an `ME Sequence`
+"""
+numContrasts(seq::MESequence)  = length(seq.T_echo)
+
+"""
+    echoTimes(seq::MESequence)
+
+returns the echo times of an `ME Sequence`
+"""
 echoTimes(seq::MESequence) = seq.T_echo
 
+"""
+    flipAngles(seq::MESequence)
+
+returns the refocusing flip angles of an `ME Sequence`
+"""
 flipAngles(seq::MESequence) = seq.refocusingAngles
 
 string(seq::MESequence) = "ME"
 
- #=
-   calculate echo amplitudes using the extended phase graph method.
-   echo times are given in units of TR
- =#
+"""
+    echoAmplitudes(seq::MESequence, R1::Float64, R2::Float64, numStates=nothing)
+
+calculates echo amplitudes for a given `MESequence` and given relaxation Rates R1, R2.
+Calculations are performed using the extended phase graph method.
+For simplicity instantaneous pulses are assumed.
+If `numStates=nothing` all dephasing states will be taken into account
+
+# Arguments
+* `seq::MESequence` - pulse sequence
+* `R1::Float64` - R1 value to use (1/T1)
+* `R2::Float64` - R2 value to use (1/T2)
+* `numStates=nothing` - number of dephasing states to consider
+
+"""
 function echoAmplitudes(seq::MESequence, R1::Float64, R2::Float64, numStates=nothing)
   # calculate amplitudes of longitudinal and dephased states
   f, z = epgAmplitudes(seq, R1, R2)
 
   # evolution of the relevant states until T_echo
   T_rel = seq.T_echo .- seq.T_rf
-  amp = f[2*numEchoes(seq)-1,2:end] .* exp.(-T_rel*R2)
+  amp = f[2*numContrasts(seq)-1,2:end] .* exp.(-T_rel*R2)
 
   return amp
 end
 
-#=
- calculate amplitudes of dephased and longitudinal states of the magnetization
- using the extended phase graph method.
-=#
+"""
+    epgAmplitudes(seq::MESequence, R1::Float64, R2::Float64, numStates=nothing)
+
+calculates EPG amplitudes after each pulse of a given `MESequence` with the given relaxation Rates R1, R2.
+Calculations are performed using the extended phase graph method.
+For simplicity instantaneous pulses are assumed.
+If `numStates=nothing` all dephasing states will be taken into account
+
+# Arguments
+* `seq::MESequence` - pulse sequence
+* `R1::Float64` - R1 value to use (1/T1)
+* `R2::Float64` - R2 value to use (1/T2)
+* `numStates=nothing` - number of dephasing states to consider
+
+"""
 function epgAmplitudes(seq::MESequence, R1::Real, R2::Real, numStates=nothing)
   # repetion time and number of pulses
-  np=numEchoes(seq)
+  np=numContrasts(seq)
 
   # initial states for the dephased (f) and longitudinal (z) magnetization.
   # the magnetization after the RF pulse is described by f_deph and z_deph.
