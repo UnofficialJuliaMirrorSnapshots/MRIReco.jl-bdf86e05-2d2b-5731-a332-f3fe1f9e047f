@@ -1,6 +1,7 @@
 export Trajectory,trajectory,
        kspaceNodes, echoTime, acqTimePerProfile, readoutTimes,
-       numSamplingPerProfile, numProfiles, numSlices, findCenters, samplingFreq
+       numSamplingPerProfile, numProfiles, numSlices, findCenters, samplingFreq,
+       scale
 
 import Base: string
 
@@ -33,8 +34,9 @@ mutable struct Trajectory
   circular::Bool
 end
 
-function Trajectory(nodes::Matrix{T}, numProfiles::Int64, numSamplingPerProfile
-              ; times=nothing, TE::Float64=0.0, AQ::Float64=1.e-3, numSlices::Int64=1, cartesian::Bool=false, circular::Bool=false) where T <: AbstractFloat
+function Trajectory(nodes::AbstractMatrix{T}, numProfiles::Int64, numSamplingPerProfile;
+                    times=nothing, TE::Float64=0.0, AQ::Float64=1.e-3, numSlices::Int64=1,
+                    cartesian::Bool=false, circular::Bool=false) where T <: AbstractFloat
   if times != nothing
     ttimes = readoutTimes
   else
@@ -48,12 +50,19 @@ Base.vec(tr::Trajectory) = [tr]
 Base.vec(tr::Vector{Trajectory}) = tr
 Base.size(tr::Trajectory) = size(kspaceNodes(tr))
 Base.size(tr::Trajectory,i::Int) = size(kspaceNodes(tr),i)
+function scale(tr::Trajectory, factor::Real)
+  trC = deepcopy(tr)
+  trC.nodes ./= factor
+  return trC
+end
 
 include("2D/Cartesian2D.jl")
 include("2D/Radial2D.jl")
 include("2D/Spiral2D.jl")
 include("2D/OneLine2D.jl")
 include("2D/Spiral2DVariableDens.jl")
+include("2D/Spiral2DDualDens.jl")
+include("2D/Spiral2DPerturbed.jl")
 include("2D/EPI.jl")
 
 include("3D/Kooshball.jl")
@@ -91,6 +100,10 @@ function trajectory(trajName::AbstractString, numProfiles::Int, numSamplingPerPr
     tr = OneLine2dTrajectory(numProfiles, numSamplingPerProfile; TE=TE, AQ=AQ, kargs...)
   elseif trajName == "SpiralVarDens"
     tr = SpiralTrajectoryVarDens(numProfiles, numSamplingPerProfile; TE=TE, AQ=AQ, kargs...)
+elseif trajName == "SpiralPerturbed"
+    tr = SpiralPerturbedTrajectory(numProfiles, numSamplingPerProfile; TE=TE, AQ=AQ, kargs...)
+  elseif trajName == "SpiralDualDens"
+    tr = SpiralTrajectoryDualDens(numProfiles, numSamplingPerProfile; TE=TE, AQ=AQ, kargs...)
   elseif trajName == "Cartesian3D"
     tr = CartesianTrajectory3D(numProfiles, numSamplingPerProfile; TE=TE, AQ=AQ, numSlices=numSlices, kargs...)
   elseif trajName == "StackOfStars"

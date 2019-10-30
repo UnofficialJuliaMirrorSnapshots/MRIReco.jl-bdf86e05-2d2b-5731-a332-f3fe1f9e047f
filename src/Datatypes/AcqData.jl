@@ -1,6 +1,6 @@
 export AcquisitionData, kData, kdataSingleSlice, convertUndersampledData,
-       weightData!, weightedData, unweightData!, unweightDataSquared!, changeEncodingSize2D,
-       convert3dTo2d, numContrasts,numChannels,numSlices,numRepititions
+       changeEncodingSize2D, convert3dTo2d, samplingDensity,
+       numContrasts, numChannels, numSlices, numRepititions, apodization!
 
 """
 struct describing MRI acquisition data.
@@ -20,7 +20,7 @@ mutable struct AcquisitionData
   sequenceInfo::Dict{Symbol,Any}
   traj::Vector{Trajectory}
   kdata::Array{Matrix{ComplexF64},3}
-  subsampleIndices::Vector{Array{Int64}}
+  subsampleIndices::Vector{Vector{Int64}}
   encodingSize::Vector{Int64}
   fov::Vector{Float64}
 end
@@ -215,7 +215,7 @@ function samplingDensity(acqData::AcquisitionData,shape::Tuple)
       nodes = kspaceNodes(tr)
     end
     plan = NFFTPlan(nodes, shape,3, 1.25)
-    weights[echo] = sqrt.(sdc(plan))
+    weights[echo] = sqrt.(sdc(plan, iters=3))
   end
   return weights
 end
@@ -240,7 +240,7 @@ end
 does the same thing as `changeEncodingSize2D` but acts in-place on `acqData`.
 """
 function changeEncodingSize2D!(acqData::AcquisitionData,newEncodingSize::Vector{Int64})
-  fac = acqData.encodingSize ./ newEncodingSize
+  fac = (acqData.encodingSize ./ newEncodingSize)[1:2]
   numContr = numContrasts(acqData)
   numSl = numSlices(acqData)
   numReps = numRepititions(acqData)
@@ -258,6 +258,7 @@ function changeEncodingSize2D!(acqData::AcquisitionData,newEncodingSize::Vector{
     tr.nodes = nodes[:,idx[i]]
     times = readoutTimes(tr)
     tr.times = times[idx[i]]
+    acqData.subsampleIndices[i] = acqData.subsampleIndices[i][idx[i]]
   end
 
   # find relevant kspace data
@@ -332,4 +333,27 @@ function convert3dTo2d(acqData::AcquisitionData)
   end
 
   return AcquisitionData(acqData.sequenceInfo, tr2d, kdata2d, subsampleIndices2d, acqData.encodingSize, acqData.fov)
+end
+
+hann(x) = 0.5*(1-cos(2*pi*(x-0.5)))
+
+function apodization!(acqData::AcquisitionData)
+    numContr = numContrasts(acqData)
+    numSl = numSlices(acqData)
+    numReps = numRepititions(acqData)
+
+    for rep=1:numReps
+      for slice=1:numSl
+        for echo=1:numContr
+          tr = trajectory(acqData,echo)
+          nodes = kspaceNodes(tr)
+          for k=1:size(acqData.kdata[echo,slice,rep],1)
+            weight = hann(nodes[1,k])*hann(nodes[2,k])+0.5
+            acqData.kdata[echo,slice,rep][k,:] .*= weight
+          end
+        end
+      end
+    end
+
+    return acqData
 end

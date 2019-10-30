@@ -1,11 +1,12 @@
-export SpiralTrajectory, spiralNodes, spiralDensity
+export SpiralTrajectoryDualDensity
 
 """
-    SpiralTrajectory(numProfiles, numSamplingPerProfile
+    SpiralTrajectoryDualDensity(numProfiles, numSamplingPerProfile
                   ; TE::Float64=0.0
                   , AQ::Float64=1.e-3
                   , windings::Real= 6.25
                   , angleOffset= :equispaced
+                  , densityFactor=2.0
                   , kargs...)
 
 returns a 2d spiral trajectory.
@@ -18,24 +19,26 @@ returns a 2d spiral trajectory.
 * (`windings::Real= 6.25`)        - number of windings of the spiral profiles
 * (`angleOffset= :equispaced`)    - spacing of profile angles (`:equispaced` sampling, `:golden` angle sampling or `:random` sampling)
 """
-function SpiralTrajectory(numProfiles, numSamplingPerProfile
+function SpiralTrajectoryDualDens(numProfiles, numSamplingPerProfile
                   ; TE::Float64=0.0
                   , AQ::Float64=1.e-3
                   , windings::Real= 6.25
                   , kmax::Real=0.5
                   , angleOffset::String="equispaced"
+                  , densityFactor::Float64=2.0
                   , kargs...)
-  nodes = spiralNodes(numProfiles, numSamplingPerProfile; windings=windings,
-                      angleOffset=angleOffset, kmax=kmax)
+  nodes = spiralNodesDualDens(numProfiles, numSamplingPerProfile; windings=windings,
+              angleOffset=angleOffset, densityFactor=densityFactor, kmax=kmax)
   times = readoutTimes(numProfiles, numSamplingPerProfile; TE=TE, AQ=AQ)
-  return  Trajectory("Spiral", nodes, times, TE, AQ, numProfiles, numSamplingPerProfile, 1, false, true)
+  return  Trajectory("SpiralDualDens", nodes, times, TE, AQ, numProfiles, numSamplingPerProfile, 1, false, true)
 end
 
-function spiralNodes(numProfiles::Int64
+function spiralNodesDualDens(numProfiles::Int64
                             , numSamplingPerProfile::Int64
                             ; windings::Real= 6.25
                             , kmax::Real=0.5
                             , angleOffset::String="equispaced"
+                            , densityFactor::Float64
                             , kargs...)
 
   nodes = zeros(2,numSamplingPerProfile, numProfiles)
@@ -47,25 +50,21 @@ function spiralNodes(numProfiles::Int64
       angles = collect((0:numProfiles-1)/numProfiles)
   end
 
-  w = windings # 8/64 * 50 = 6.25 which means we have 6.25 turns aka windings
+  w = windings
   for l = 1:numProfiles
     for k = 1:numSamplingPerProfile
-      # For the special case that τ(t)=t, the amount of time spent for each
-      # winding is constant, regardless of whether the acquired
-      # winding is near the center or in the outer part of the spiral. I
-      # other words, the readout gradients reach their maximum
-      # performance at the end of the acquisition.
-      t = sqrt((k-1)/(numSamplingPerProfile-1)) #
-      nodes[1,k,l] = kmax*t*cos(2*pi*( w*t + angles[l] ))
-      nodes[2,k,l] = kmax*t*sin(2*pi*( w*t + angles[l] ))
+
+      t = sqrt((k-1)/(numSamplingPerProfile-1))
+
+      if t < 1/2
+        tau = t/densityFactor
+      else
+        tau = 0.5/densityFactor + (t-0.5)*2*(1.0-0.5/densityFactor)
+      end
+
+      nodes[1,k,l] = kmax*tau*cos(2*pi*( w*t + angles[l] ))
+      nodes[2,k,l] = kmax*tau*sin(2*pi*( w*t + angles[l] ))
     end
   end
   return reshape(nodes, 2, numSamplingPerProfile*numProfiles)
-end
-
-"""
-Calculating the density using VoronoiCells
-"""
-function spiralDensity(numProfiles::Int64, numSamplingPerProfile::Int64)
-  @error "Not implemented!"
 end

@@ -4,7 +4,7 @@ export SpiralTrajectoryVarDens, spiralVarDensNodes, spiralVarDensDensity
     SpiralTrajectoryVarDens(numProfiles, numSamplingPerProfile
                   ; TE::Float64=0.0
                   , AQ::Float64=1.e-3
-                  , windings::Float64= 6.25
+                  , windings::Real= 6.25
                   , alpha=2.0
                   , angleOffset= :equispaced
                   , kargs...)
@@ -21,13 +21,15 @@ returns a 2d spiral trajectory with variable density
 * (`angleOffset= :equispaced`)    - spacing of profile angles (`:equispaced` sampling, `:golden` angle sampling or `:random` sampling)
 """
 function SpiralTrajectoryVarDens(numProfiles, numSamplingPerProfile
-                  ; TE::Float64=0.0
-                  , AQ::Float64=1.e-3
-                  , windings::Float64= 6.25
-                  , alpha=2.0
+                  ; TE::Real=0.0
+                  , AQ::Real=1.e-3
+                  , windings::Real= 6.25
+                  , alpha::Real=2.0
+                  , kmax::Real=0.5
                   , angleOffset::String="equispaced"
                   , kargs...)
-  nodes = spiralVarDensNodes(numProfiles, numSamplingPerProfile; windings=windings, alpha=alpha, angleOffset=angleOffset)
+  nodes = spiralVarDensNodes(numProfiles, numSamplingPerProfile; windings=windings,
+                             alpha=alpha, angleOffset=angleOffset, kmax=kmax)
   times = readoutTimes(numProfiles, numSamplingPerProfile; TE=TE, AQ=AQ)
   return  Trajectory("SpiralVarDens", nodes, times, TE, AQ, numProfiles, numSamplingPerProfile, 1, false, true)
 end
@@ -35,18 +37,14 @@ end
 # Constructing the amplitude limited case of the variable density spiral Trajectory
 function spiralVarDensNodes(numProfiles::Int64
                         , numSamplingPerProfile::Int64
-                        ; windings::Float64=6.25
-                        , alpha::Float64=2.0
+                        ; windings::Real=6.25
+                        , alpha::Real=2.0
+                        , kmax::Real=0.5
                         , angleOffset::String= "equispaced" #:equispaced
                         , kargs...)
 
   nodes = zeros(2,numSamplingPerProfile, numProfiles)
-  angles = collect((0:numProfiles-1)/numProfiles) # Phase offset for multiple Profiles
-  A = 0.5 # Maximum radius is 0.5
-  gamma = 42.58 *1e6 # 42,58 MHz/T : Gyromagnetic relation for protons
-
-  # println("angleOffset=$(angleOffset)")
-
+  
   if angleOffset == "golden" #:golden
       angles = [i*(3-sqrt(5))/2  for i=0:numProfiles-1 ]
   elseif angleOffset == "random" #:random
@@ -58,15 +56,12 @@ function spiralVarDensNodes(numProfiles::Int64
       angles = collect((0:numProfiles-1)/numProfiles)
   end
 
-
-  T_ea = 1/((alpha+1)*gamma/(2pi*windings))
-  # times = linspace(0,T_ea,numSamplingPerProfile)
-  times = range(0,stop=T_ea,length=numSamplingPerProfile)
+  times = range(0,stop=1,length=numSamplingPerProfile)
   for l = 1:numProfiles
     for k = 1:numSamplingPerProfile
-      tau = (gamma/(2pi*windings) *(alpha+1)*times[k])^(1/(alpha+1))
-      nodes[1,k,l] = A*tau^alpha*cos(2*pi*( windings*tau + angles[l] ))
-      nodes[2,k,l] = A*tau^alpha*sin(2*pi*( windings*tau + angles[l] ))
+      tau = (times[k])^(1/(alpha+1))
+      nodes[1,k,l] = kmax*tau^alpha*cos(2*pi*( windings*tau + angles[l] ))
+      nodes[2,k,l] = kmax*tau^alpha*sin(2*pi*( windings*tau + angles[l] ))
     end
   end
   return reshape(nodes, 2, numSamplingPerProfile*numProfiles)
